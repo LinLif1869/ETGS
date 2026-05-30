@@ -7,17 +7,17 @@ DYNAMIC_RGBT_T_ENV = 25.0
 
 
 _DYNAMIC_RGBT_SCENE_DEFAULTS = {
-    "heatingtable": {"fps": 10.0, "min_value": 10.0, "max_value": 120.0},
-    "hottable": {"fps": 10.0, "min_value": 10.0, "max_value": 120.0},
-    "hotbar": {"fps": 30.0, "min_value": 10.0, "max_value": 120.0},
-    "heatgun": {"fps": 30.0, "min_value": 10.0, "max_value": 120.0},
-    "bacon": {"fps": 30.0, "min_value": 20.0, "max_value": 100.0},
-    "icepacks": {"fps": 30.0, "min_value": -10.0, "max_value": 50.0},
-    "hairdryer": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
-    "ironcloth": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
-    "candles": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
-    "hotwater": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
-    "foam": {"fps": 30.0, "min_value": 20.0, "max_value": 70.0},
+    "Heatingtable": {"fps": 10.0, "min_value": 10.0, "max_value": 120.0},
+    "HotPressMachine": {"fps": 30.0, "min_value": 10.0, "max_value": 120.0},
+    "Hotwind": {"fps": 30.0, "min_value": 10.0, "max_value": 120.0},
+    "Bacon": {"fps": 30.0, "min_value": 20.0, "max_value": 100.0},
+    "DeliverIcePacks": {"fps": 30.0, "min_value": -10.0, "max_value": 50.0},
+    "HairDryer": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
+    "HairDryerDark": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
+    "IroningClothes": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
+    "LightTheCandles": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
+    "PourHotWater": {"fps": 30.0, "min_value": 20.0, "max_value": 80.0},
+    "WhiteFoamCovers": {"fps": 30.0, "min_value": 20.0, "max_value": 70.0},
     "covers": {"fps": 10.0, "min_value": 20.0, "max_value": 80.0},
 }
 

@@ -150,7 +150,7 @@ def _load_json(json_path):
         return json.load(f)
 
 def _pick_nerfies_scale_dir(base_dir):
-    for scale_dir in ("2x", "1x", "4x", "8x", "16x"):
+    for scale_dir in ("2x", "1x", "4x"):
         scale_path = os.path.join(base_dir, scale_dir)
         if os.path.isdir(scale_path):
             return scale_path
