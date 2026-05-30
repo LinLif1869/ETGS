@@ -17,6 +17,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from scene.dynamic_rgbt_metadata import is_nerfies_dataset
 
 class Scene:
 
@@ -46,6 +47,9 @@ class Scene:
                 scene_info = sceneLoadTypeCallbacks["Colmap_thermal"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
             else:
                 scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
+        elif is_nerfies_dataset(args.source_path):
+            print("Found Nerfies dataset files, assuming Nerfies/DynamicRGBT data set!")
+            scene_info = sceneLoadTypeCallbacks["Nerfies"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)

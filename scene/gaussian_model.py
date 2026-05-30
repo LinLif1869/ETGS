@@ -21,6 +21,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from scene.dynamic_rgbt_metadata import build_frame_times, get_dynamic_rgbt_scene_defaults, load_nerfies_ids
 
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
@@ -124,15 +125,21 @@ class GaussianModel:
                 try:
                     with open(info_path, 'r') as f:
                         info_data = json.load(f)
-                    t_env_value = info_data.get("T_env")  # default 26.0
+                    t_env_value = info_data.get("T_env", 26.0)
                     self.t_env = torch.tensor(t_env_value, device="cuda", dtype=torch.float32)
                     print(f"T_env loaded: {t_env_value}")
                 except Exception as e:
                     print(f"Reading info.json failed: {e}, using default value 26.0")
                     self.t_env = torch.tensor(26.0, device="cuda", dtype=torch.float32)  # default value
             else:
-                print(f"File not found: {info_path}, using default value 26.0")
-                self.t_env = torch.tensor(26.0, device="cuda", dtype=torch.float32)  # default value
+                defaults = get_dynamic_rgbt_scene_defaults(dataset.source_path)
+                if defaults is not None:
+                    t_env_value = defaults["T_env"]
+                    print(f"DynamicRGBT metadata inferred: T_env={t_env_value}")
+                    self.t_env = torch.tensor(t_env_value, device="cuda", dtype=torch.float32)
+                else:
+                    print(f"File not found: {info_path}, using default value 26.0")
+                    self.t_env = torch.tensor(26.0, device="cuda", dtype=torch.float32)  # default value
 
     def init_frequency_grid(self, dataset, alpha=0.25, K_default=24):
         """
@@ -180,10 +187,17 @@ class GaussianModel:
                 times = np.asarray(dataset.timestamps, dtype=np.float64)
             elif hasattr(dataset, "frame_times") and dataset.frame_times is not None and len(dataset.frame_times) >= 2:
                 times = np.asarray(dataset.frame_times, dtype=np.float64)
+            else:
+                defaults = get_dynamic_rgbt_scene_defaults(dataset.source_path)
+                nerfies_ids = load_nerfies_ids(dataset.source_path)
+                if defaults is not None and len(nerfies_ids) >= 2:
+                    times = np.asarray(build_frame_times(len(nerfies_ids), defaults["fps"]), dtype=np.float64)
+                    print(f"[freq-grid] DynamicRGBT Nerfies times inferred from fps={defaults['fps']:.1f}, frames={len(nerfies_ids)}")
 
         if times is None or len(times) < 2:
             T_span = 3600.0
             dt_min = 20.0
+            times = np.asarray([0.0, dt_min], dtype=np.float64)
         else:
             T_span = float(times[-1] - times[0])
             diffs = np.diff(times)
@@ -259,9 +273,15 @@ class GaussianModel:
             tmin = float(info["min_value"])
             tmax = float(info["max_value"])
         except Exception as e:
-            print(f"[gray-bounds] fail to read {info_path}: {e}")
-            tmin = float(getattr(dataset, "tmin_fallback", t_env_fallback - 5.0))
-            tmax = float(getattr(dataset, "tmax_fallback", t_env_fallback + 5.0))
+            defaults = get_dynamic_rgbt_scene_defaults(dataset.source_path)
+            if defaults is not None:
+                tmin = float(defaults["min_value"])
+                tmax = float(defaults["max_value"])
+                print(f"[gray-bounds] DynamicRGBT metadata inferred from scene path: {dataset.source_path}")
+            else:
+                print(f"[gray-bounds] fail to read {info_path}: {e}")
+                tmin = float(getattr(dataset, "tmin_fallback", t_env_fallback - 5.0))
+                tmax = float(getattr(dataset, "tmax_fallback", t_env_fallback + 5.0))
 
         if not (tmax > tmin):
             tmax = tmin + 1.0

@@ -23,6 +23,7 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+from scene.dynamic_rgbt_metadata import is_dynamic_rgbt_path
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -143,6 +144,233 @@ def storePly(path, xyz, rgb):
     vertex_element = PlyElement.describe(elements, 'vertex')
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
+
+def _load_json(json_path):
+    with open(json_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def _pick_nerfies_scale_dir(base_dir):
+    for scale_dir in ("2x", "1x", "4x", "8x", "16x"):
+        scale_path = os.path.join(base_dir, scale_dir)
+        if os.path.isdir(scale_path):
+            return scale_path
+    return None
+
+def _find_nerfies_modality_root(path, images):
+    if images is not None:
+        normalized = images.replace("\\", "/")
+        modality, _, remainder = normalized.partition("/")
+        if modality in ("thermal", "rgb"):
+            modality_root = os.path.join(path, modality)
+            if os.path.exists(os.path.join(modality_root, "dataset.json")):
+                return modality_root, remainder if remainder else None
+
+    for modality in ("thermal", "rgb"):
+        modality_root = os.path.join(path, modality)
+        if os.path.exists(os.path.join(modality_root, "dataset.json")):
+            return modality_root, images
+
+    return path, images
+
+def _get_nerfies_image_dir(modality_root, images):
+    reading_dir = "rgb" if images is None else images
+    candidate_dirs = [os.path.join(modality_root, reading_dir)]
+    if reading_dir.startswith("images/") or reading_dir.startswith("rgb/"):
+        candidate_dirs.append(os.path.join(modality_root, reading_dir.split("/", 1)[1]))
+
+    for candidate_dir in candidate_dirs:
+        if os.path.isdir(candidate_dir):
+            scale_path = _pick_nerfies_scale_dir(candidate_dir)
+            return scale_path if scale_path is not None else candidate_dir
+
+    for fallback_dir in ("rgb", "images"):
+        candidate_dir = os.path.join(modality_root, fallback_dir)
+        if os.path.isdir(candidate_dir):
+            scale_path = _pick_nerfies_scale_dir(candidate_dir)
+            return scale_path if scale_path is not None else candidate_dir
+
+    scale_path = _pick_nerfies_scale_dir(modality_root)
+    if scale_path is not None:
+        return scale_path
+
+    raise FileNotFoundError(f"Nerfies image directory does not exist under {modality_root}")
+
+def _find_image_path(image_dir, image_id):
+    for ext in (".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"):
+        image_path = os.path.join(image_dir, image_id + ext)
+        if os.path.exists(image_path):
+            return image_path
+    return None
+
+def _camera_params_from_nerfies(camera_json, width, height):
+    orientation = np.asarray(camera_json["orientation"], dtype=np.float32)
+    position = np.asarray(camera_json["position"], dtype=np.float32)
+
+    R = orientation.T
+    T = -position @ R
+
+    focal = camera_json["focal_length"]
+    if isinstance(focal, (list, tuple, np.ndarray)):
+        focal_x = float(focal[0])
+        focal_y = float(focal[1]) if len(focal) >= 2 else focal_x
+    else:
+        focal_x = float(focal)
+        focal_y = focal_x
+
+    image_size = camera_json.get("image_size", None)
+    if image_size is not None and len(image_size) >= 2:
+        base_w = float(image_size[0])
+        base_h = float(image_size[1])
+        if base_w > 0 and base_h > 0:
+            focal_x *= float(width) / base_w
+            focal_y *= float(height) / base_h
+
+    focal_y *= float(camera_json.get("pixel_aspect_ratio", 1.0))
+    return R, T, focal2fov(focal_y, height), focal2fov(focal_x, width)
+
+def _get_nerfies_split_ids(all_ids, dataset_json, eval, llffhold=8):
+    val_ids = set(dataset_json.get("val_ids", []))
+    train_ids_cfg = set(dataset_json.get("train_ids", []))
+
+    if eval:
+        train_ids_set = train_ids_cfg if train_ids_cfg else set([image_id for image_id in all_ids if image_id not in val_ids])
+        if val_ids:
+            test_ids_set = val_ids
+        else:
+            test_ids_set = set([image_id for idx, image_id in enumerate(all_ids) if idx % llffhold == 0])
+            train_ids_set = set(all_ids) - test_ids_set
+    else:
+        train_ids_set = set(all_ids)
+        test_ids_set = set()
+
+    train_ids = [image_id for image_id in all_ids if image_id in train_ids_set]
+    test_ids = [image_id for image_id in all_ids if image_id in test_ids_set]
+    return train_ids, test_ids
+
+def _resolve_nerfies_depth_path(path, modality_root, depths, image_id):
+    if depths == "":
+        return ""
+
+    for base_dir in (os.path.join(path, depths), os.path.join(modality_root, depths)):
+        if os.path.isdir(base_dir):
+            depth_path = _find_image_path(base_dir, image_id)
+            return depth_path if depth_path is not None else os.path.join(base_dir, f"{image_id}.png")
+    return os.path.join(path, depths, f"{image_id}.png")
+
+def _load_nerfies_point_cloud(path, modality_root):
+    candidates = [modality_root]
+    for modality in ("rgb", "thermal"):
+        root = os.path.join(path, modality)
+        if root not in candidates:
+            candidates.append(root)
+    candidates.append(path)
+
+    for root in candidates:
+        ply_path = os.path.join(root, "points3D.ply")
+        bin_path = os.path.join(root, "points3D.bin")
+        txt_path = os.path.join(root, "points3D.txt")
+        npy_path = os.path.join(root, "points.npy")
+
+        if os.path.exists(ply_path):
+            return fetchPly(ply_path), ply_path
+
+        try:
+            xyz, rgb, _ = read_points3D_binary(bin_path)
+            storePly(ply_path, xyz, rgb)
+            return fetchPly(ply_path), ply_path
+        except Exception:
+            pass
+
+        try:
+            xyz, rgb, _ = read_points3D_text(txt_path)
+            storePly(ply_path, xyz, rgb)
+            return fetchPly(ply_path), ply_path
+        except Exception:
+            pass
+
+        if os.path.exists(npy_path):
+            points = np.load(npy_path)
+            if points.ndim != 2 or points.shape[1] < 3:
+                raise ValueError(f"Invalid points.npy shape: {points.shape}, expected (N, >=3)")
+            xyz = np.asarray(points[:, :3], dtype=np.float32)
+            if points.shape[1] >= 6:
+                rgb = np.asarray(points[:, 3:6], dtype=np.float32)
+                if rgb.max() <= 1.0:
+                    rgb = (rgb * 255.0).clip(0, 255)
+                rgb = rgb.astype(np.uint8)
+            else:
+                rgb = np.full((xyz.shape[0], 3), 127, dtype=np.uint8)
+            storePly(ply_path, xyz, rgb)
+            return fetchPly(ply_path), ply_path
+
+    raise FileNotFoundError(f"Nerfies point cloud not found in {path} (.ply/.bin/.txt/.npy)")
+
+def readNerfiesSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
+    modality_root, images = _find_nerfies_modality_root(path, images)
+    dataset_path = os.path.join(modality_root, "dataset.json")
+    camera_dir = os.path.join(modality_root, "camera")
+    if not os.path.exists(dataset_path) or not os.path.isdir(camera_dir):
+        raise FileNotFoundError("Nerfies folder must contain dataset.json and camera/")
+
+    dataset_json = _load_json(dataset_path)
+    image_ids = list(dataset_json.get("ids", []))
+    if len(image_ids) == 0:
+        raise ValueError(f"No ids found in {dataset_path}")
+
+    train_ids, test_ids = _get_nerfies_split_ids(image_ids, dataset_json, eval, llffhold=llffhold)
+    train_ids_set = set(train_ids)
+    test_ids_set = set(test_ids)
+    image_dir = _get_nerfies_image_dir(modality_root, images)
+
+    cam_infos = []
+    for idx, image_id in enumerate(image_ids):
+        camera_path = os.path.join(camera_dir, image_id + ".json")
+        if not os.path.exists(camera_path):
+            raise FileNotFoundError(f"Camera json not found: {camera_path}")
+        camera_json = _load_json(camera_path)
+
+        image_path = _find_image_path(image_dir, image_id)
+        if image_path is None:
+            raise FileNotFoundError(f"Image not found for id '{image_id}' in {image_dir}")
+
+        with Image.open(image_path) as image:
+            width, height = image.size
+
+        R, T, FovY, FovX = _camera_params_from_nerfies(camera_json, width, height)
+        cam_infos.append(
+            CameraInfo(
+                uid=idx,
+                idx=idx,
+                R=R,
+                T=T,
+                FovY=FovY,
+                FovX=FovX,
+                depth_params=None,
+                image_path=image_path,
+                image_name=Path(image_path).stem,
+                depth_path=_resolve_nerfies_depth_path(path, modality_root, depths, image_id),
+                width=width,
+                height=height,
+                is_test=image_id in test_ids_set,
+            )
+        )
+
+    train_cam_infos = [c for c, image_id in zip(cam_infos, image_ids) if train_test_exp or image_id in train_ids_set]
+    test_cam_infos = [c for c, image_id in zip(cam_infos, image_ids) if image_id in test_ids_set]
+    norm_cams = train_cam_infos if len(train_cam_infos) > 0 else test_cam_infos
+    nerf_normalization = getNerfppNorm(norm_cams)
+    pcd, ply_path = _load_nerfies_point_cloud(path, modality_root)
+
+    if is_dynamic_rgbt_path(path):
+        print("Detected DynamicRGBT Nerfies scene; using assumed FPS and thermal bounds.")
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path,
+                           is_nerf_synthetic=False)
+    return scene_info
 
 def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     try:
@@ -474,5 +702,6 @@ def readCamerasFromTransforms_NTR(path, transformsfile, depths_folder, white_bac
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Colmap_thermal": readColmapSceneInfo_thermal,
+    "Nerfies": readNerfiesSceneInfo,
     "Blender" : readNerfSyntheticInfo
 }
