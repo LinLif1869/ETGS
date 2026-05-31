@@ -21,6 +21,7 @@ from utils.efficiency_utils import add_efficiency
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+from utils.ironbow_utils import gray_to_ironbow_tensor
 import json
 import time
 try:
@@ -32,9 +33,13 @@ except:
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, train_test_exp, separate_sh):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    render_pseudo_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_pseudo")
+    gts_pseudo_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_pseudo")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(render_pseudo_path, exist_ok=True)
+    makedirs(gts_pseudo_path, exist_ok=True)
     
     total_render_time = 0.0
     pbar = tqdm(views, desc="Rendering progress")
@@ -47,13 +52,21 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # ----------------------------------------------
         total_render_time += time.time() - start_time
         gt = view.original_image[0:3, :, :]
+        rendering_pseudo = gray_to_ironbow_tensor(rendering)
+        gt_pseudo = view.original_pseudo_image
+        if gt_pseudo is None:
+            gt_pseudo = gray_to_ironbow_tensor(gt)
 
         if args.train_test_exp:
             rendering = rendering[..., rendering.shape[-1] // 2:]
             gt = gt[..., gt.shape[-1] // 2:]
+            rendering_pseudo = rendering_pseudo[..., rendering_pseudo.shape[-1] // 2:]
+            gt_pseudo = gt_pseudo[..., gt_pseudo.shape[-1] // 2:]
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(rendering_pseudo, os.path.join(render_pseudo_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt_pseudo, os.path.join(gts_pseudo_path, '{0:05d}'.format(idx) + ".png"))
         
     render_speed = len(views) / total_render_time if total_render_time > 0 else 0.0
     add_efficiency(model_path, render_speed)

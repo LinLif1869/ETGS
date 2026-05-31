@@ -25,13 +25,20 @@ def readImages(renders_dir, gt_dir):
     renders = []
     gts = []
     image_names = []
-    for fname in os.listdir(renders_dir):
+    for fname in sorted(os.listdir(renders_dir)):
         render = Image.open(renders_dir / fname)
         gt = Image.open(gt_dir / fname)
         renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
         gts.append(tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda())
         image_names.append(fname)
     return renders, gts, image_names
+
+def get_metric_image_dirs(method_dir):
+    pseudo_renders_dir = method_dir / "renders_pseudo"
+    pseudo_gt_dir = method_dir / "gt_pseudo"
+    if pseudo_renders_dir.is_dir() and pseudo_gt_dir.is_dir():
+        return pseudo_renders_dir, pseudo_gt_dir
+    return method_dir / "renders", method_dir / "gt"
 
 def evaluate(model_paths):
 
@@ -60,8 +67,7 @@ def evaluate(model_paths):
                 per_view_dict_polytopeonly[scene_dir][method] = {}
 
                 method_dir = test_dir / method
-                gt_dir = method_dir/ "gt"
-                renders_dir = method_dir / "renders"
+                renders_dir, gt_dir = get_metric_image_dirs(method_dir)
                 renders, gts, image_names = readImages(renders_dir, gt_dir)
 
                 ssims = []

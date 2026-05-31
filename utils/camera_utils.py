@@ -14,11 +14,21 @@ import numpy as np
 from utils.graphics_utils import fov2focal
 from PIL import Image
 import cv2
+from scene.dynamic_rgbt_metadata import is_dynamic_rgbt_path
+from utils.ironbow_utils import ironbow_to_gray_rgb_pil
 
 WARNED = False
 
+def _uses_dynamic_rgbt_ironbow(args, cam_info):
+    path_parts = cam_info.image_path.replace("\\", "/").lower().split("/")
+    return is_dynamic_rgbt_path(args.source_path) and "thermal" in path_parts
+
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dataset):
     image = Image.open(cam_info.image_path)
+    pseudo_image = None
+    if _uses_dynamic_rgbt_ironbow(args, cam_info):
+        pseudo_image = image.convert("RGB")
+        image = ironbow_to_gray_rgb_pil(pseudo_image)
 
     if cam_info.depth_path != "":
         try:
@@ -62,7 +72,7 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
 
     return Camera(resolution, colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, idx=cam_info.idx,
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, depth_params=cam_info.depth_params,
-                  image=image, invdepthmap=invdepthmap,
+                  image=image, pseudo_image=pseudo_image, invdepthmap=invdepthmap,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
                   train_test_exp=args.train_test_exp, is_test_dataset=is_test_dataset, is_test_view=cam_info.is_test)
 
