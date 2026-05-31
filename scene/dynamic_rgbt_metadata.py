@@ -42,10 +42,19 @@ def _path_parts(path):
 
 
 def get_dynamic_rgbt_scene_defaults(path):
+    normalized_defaults = [
+        (_normalize_scene_name(scene_key), defaults)
+        for scene_key, defaults in _DYNAMIC_RGBT_SCENE_DEFAULTS.items()
+    ]
     for part in _path_parts(path):
         key = _normalize_scene_name(part)
-        for scene_key, defaults in _DYNAMIC_RGBT_SCENE_DEFAULTS.items():
-            if key == scene_key or key.startswith(scene_key):
+        for scene_key, defaults in normalized_defaults:
+            if key == scene_key:
+                result = dict(defaults)
+                result["T_env"] = DYNAMIC_RGBT_T_ENV
+                return result
+        for scene_key, defaults in normalized_defaults:
+            if key.startswith(scene_key) or scene_key.startswith(key):
                 result = dict(defaults)
                 result["T_env"] = DYNAMIC_RGBT_T_ENV
                 return result
@@ -54,7 +63,8 @@ def get_dynamic_rgbt_scene_defaults(path):
 
 def is_dynamic_rgbt_path(path):
     lower_parts = [_normalize_scene_name(part) for part in _path_parts(path)]
-    return "dynamicrgbt" in lower_parts or get_dynamic_rgbt_scene_defaults(path) is not None
+    dataset_markers = {"dynamicrgbt", "rgbtimethermaldatasets", "rgbtimethermal"}
+    return bool(dataset_markers.intersection(lower_parts)) or get_dynamic_rgbt_scene_defaults(path) is not None
 
 
 def find_nerfies_root(path):
